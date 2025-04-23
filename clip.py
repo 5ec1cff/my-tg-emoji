@@ -23,8 +23,7 @@ def write_emojies(text):
             e = all_emojies[t]
             te = e[1][0]
             s += te
-            uni = ord(te)
-            le = 2 if uni > 0xffff else 1
+            le = len(te.encode('utf-16be')) // 2
             tags.append(('custom-emoji://' + e[0], off, le))
             off += le
         else:
