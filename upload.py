@@ -48,51 +48,30 @@ async def fetch_emojies(ids, client: httpx.AsyncClient):
                                                 input_name=name, input_data=r, scale=100)
             yield name, sticker.data, sticker.emojis, sticker.sticker_type
 
-emoji_list = [
-    '👆', '❤️', '🐇', '🎤', '🤗', '😠', '😉', '🐇', '🐱',
-    '👆', '❤️', '🐇', '🎤', '🤗', '😠', '😉', '🐇', '🐱',
-    '☺️', '🍵', '😫', '😰', '🦊', '❤️', '😠', '🤗', '🥵'
-]
-
 def process():
     root = ROOT
+    pngroot = root / "png"
     outroot = root / "proceed"
     os.makedirs(outroot, exist_ok=True)
-    ls = sorted(os.listdir(root))
+    ls = sorted(os.listdir(pngroot))
     i = 0
     for fn in ls:
-        if not fn.endswith(".jpg"):
+        if not fn.endswith(".png"):
             continue
-        print(i, emoji_list[i], fn)
-        with open(root / fn, 'rb') as f:
+        with open(pngroot / fn, 'rb') as f:
             data = f.read()
-            img = Image.open(io.BytesIO(data)).convert('RGBA')
-            '''
-            w, h = img.size
-            q = []
-            q.append((0, 0))
-            while len(q):
-                x, y = q.pop(0)
-                rgba = img.getpixel((x, y))
-                if rgba == (255,255,255,255):
-                    img.putpixel((x, y), (0, 0, 0, 0))
-                    if x + 1 < w:
-                        q.append((x+1, y))
-                    if y + 1 < h:
-                        q.append((x, y+1))
-            '''
-            outio = io.BytesIO()
-            img.save(outio, format="PNG")
-            data = outio.getbuffer().tobytes()
         proceed = ImageProcessor.make_sticker(input_name=fn, input_data=data, scale=512)
-        with open(outroot / fn.replace('.jpg', '.png'), 'wb') as f:
+        with open(outroot / fn, 'wb') as f:
             f.write(proceed.data)
         i += 1
 
 real_emoji_list = [
     '👆', '❤️', '🐇', '🎤', '🤗', '😠', '😉', '🐇', '🐱',
     '👆', '🐇', '🤗', '😠', '😉', '🐱',
-    '☺️', '🍵', '😫', '😰', '🦊', '❤️', '😠', '🤗', '🥵'
+    '☺️', '🍵', '😫', '😰', '🦊', '❤️', '😠', '🤗', '🥵', '😠',
+    '🐱', '🧃', '❓', '😈', '😠', '😢', '👍🏻', '❤️', '👌🏻',
+    '😎', '🐶', '🍵', '👍🏻', '👹', '😨', '😢', '🥺', '❤️',
+    '🧃', '✌🏻', '❤️', '🙃', '😎', '😔', '❓', '🐺', '👍🏻'
 ]
 
 async def main(*upd_name):
@@ -182,4 +161,4 @@ if __name__ == '__main__':
     elif len(sys.argv) >= 2:
         asyncio.run(main(*sys.argv[1:]))
     else:
-        asyncio.run(main(None))
+        asyncio.run(main())
