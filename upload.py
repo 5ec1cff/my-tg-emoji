@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -48,12 +49,15 @@ async def fetch_emojies(ids, client: httpx.AsyncClient):
                                                 input_name=name, input_data=r, scale=100)
             yield name, sticker.data, sticker.emojis, sticker.sticker_type
 
-def process():
+def process(*process_list):
     root = ROOT
     pngroot = root / "png"
     outroot = root / "proceed"
     os.makedirs(outroot, exist_ok=True)
     ls = sorted(os.listdir(pngroot))
+    if len(process_list) != 0:
+        ls = list(filter(lambda x: x in process_list, ls))
+    print(len(ls), 'to process')
     i = 0
     for fn in ls:
         if not fn.endswith(".png"):
@@ -71,7 +75,8 @@ real_emoji_list = [
     '☺️', '🍵', '😫', '😰', '🦊', '❤️', '😠', '🤗', '🥵', '😠',
     '🐱', '🧃', '❓', '😈', '😠', '😢', '👍🏻', '❤️', '👌🏻',
     '😎', '🐶', '🍵', '👍🏻', '👹', '😨', '😢', '🥺', '❤️',
-    '🧃', '✌🏻', '❤️', '🙃', '😎', '😔', '❓', '🐺', '👍🏻'
+    '🧃', '✌🏻', '❤️', '🙃', '😎', '😔', '❓', '🐺', '👍🏻',
+    '👍🏻', '❤️', '👌🏻', '😋', '🐱', '⁉️', '🙃', '😢', '🐱',
 ]
 
 async def main(*upd_name):
@@ -155,10 +160,23 @@ async def main(*upd_name):
                         print('failed')
                         traceback.print_exc()
 
+
+def expand(ls):
+    res = list()
+    for l in ls:
+        if r := re.match(r"(\d+)\.png-(\d+)\.png", l):
+            s, e = r.group(1), r.group(2)
+            s, e = int(s), int(e)
+            res.extend([f'{i:03d}.png' for i in range(s, e+1)])
+            continue
+        res.append(l)
+    return res
+
+
 if __name__ == '__main__':
     if len(sys.argv) >= 2 and sys.argv[1] == 'process':
-        process()
+        process(*expand(sys.argv[2:]))
     elif len(sys.argv) >= 2:
-        asyncio.run(main(*sys.argv[1:]))
+        asyncio.run(main(*expand(sys.argv[1:])))
     else:
         asyncio.run(main())
