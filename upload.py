@@ -70,13 +70,28 @@ def process(*process_list):
         i += 1
 
 real_emoji_list = [
+    # muzimi 9 000-008
     '👆', '❤️', '🐇', '🎤', '🤗', '😠', '😉', '🐇', '🐱',
+    # muzimi text 6 009-014
     '👆', '🐇', '🤗', '😠', '😉', '🐱',
+    # soyo 10 015-024
     '☺️', '🍵', '😫', '😰', '🦊', '❤️', '😠', '🤗', '🥵', '😠',
+    # saki 9 025-033
     '🐱', '🧃', '❓', '😈', '😠', '😢', '👍🏻', '❤️', '👌🏻',
+    # uika 9 034-042
     '😎', '🐶', '🍵', '👍🏻', '👹', '😨', '😢', '🥺', '❤️',
+    # umirin 9 043-051
     '🧃', '✌🏻', '❤️', '🙃', '😎', '😔', '❓', '🐺', '👍🏻',
+    # nyamu 9 052-060
     '👍🏻', '❤️', '👌🏻', '😋', '🐱', '⁉️', '🙃', '😢', '🐱',
+    # nyamu new 9 061-069
+    '😋', '🐱', '⁉️', '❤️', '🐱', '👍🏻', '😓', '😎', '😭',
+    # tomori 3 070-072
+    '🍄', '🐧', '❓',
+    # taki 9 073-081
+    '❤️', '🐱', '👍🏻', '😭', '🐼', '⁉️', '👌🏻', '🐇', '✌🏻',
+    # anon 3 082-084
+    '✌🏻', '🐱', '🤗',
 ]
 
 async def main(*upd_name):
@@ -172,10 +187,33 @@ def expand(ls):
         res.append(l)
     return res
 
+def rename_pics():
+    root = Path("D:\\Pictures\\tmp\\gojica")
+    pngroot = root / "png"
+    ls = os.listdir(pngroot)
+    min_id = 0
+    for f in ls:
+        if r := re.match(r'(\d+)\.png', f):
+            pic_id = r.group(1)
+            pic_id = int(pic_id)
+            if pic_id > min_id:
+                min_id = pic_id
+    ls = sorted(filter(lambda x: x.endswith('.png') and not re.match(r'(\d+)\.png', x),ls))
+
+    idx = min_id
+    for f in ls:
+        idx += 1
+        name = f'{idx:03d}.png'
+        print(name, f)
+        os.rename(pngroot / f, pngroot / name)
+
+
 
 if __name__ == '__main__':
     if len(sys.argv) >= 2 and sys.argv[1] == 'process':
         process(*expand(sys.argv[2:]))
+    elif len(sys.argv) >= 2 and sys.argv[1] == 'rename':
+        rename_pics()
     elif len(sys.argv) >= 2:
         asyncio.run(main(*expand(sys.argv[1:])))
     else:
