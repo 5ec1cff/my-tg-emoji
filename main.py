@@ -122,10 +122,10 @@ class EmojiBot:
             sticker_set_info = None
 
         print('is_update=', is_update)
-        if not is_update and sticker_set_info is None:
+        if not is_update and sticker_set_info is not None:
             await update_message(f"Sticker set {pack_name} has been already created.")
             return
-        elif is_update and sticker_set_info is not None:
+        elif is_update and sticker_set_info is None:
             await update_message(f"Sticker set {pack_name} doesn't exist.")
             return
 
