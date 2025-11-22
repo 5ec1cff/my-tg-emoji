@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import sys
 import traceback
 
@@ -249,13 +250,30 @@ def fixup():
 
 
 def merge():
+    key_rules = [("bl", r"^bili_"), ("tb", r"tieba_"), ("ka", r"^coolapk_")]
     np = {}
     for fn in os.listdir('storage'):
         with open('storage/' + fn, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        np.update(data)
+            key = None
+            idx = 0
+            for kr in key_rules:
+                if re.match(kr[1], fn):
+                    key = kr[0]
+                    break
+                idx += 1
+        for k in data:
+            if k not in np:
+                np[k] = list()
+            np[k].append(data[k] + [key, idx])
+    for k in np:
+        v = np[k]
+        if len(v) == 1:
+            np[k] = v[0][:2]
+        else:
+            np[k] = list(map(lambda x:x[:3], sorted(v, key=lambda x:x[3])))
     with open('out/merged.json', 'w', encoding='utf-8') as f:
-        json.dump(np, f, ensure_ascii=False)
+        json.dump(np, f, ensure_ascii=False) #, indent=2)
 
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == 'dl':
