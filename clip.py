@@ -95,6 +95,8 @@ if __name__ == '__main__':
     import traceback
 
     for fn in os.listdir('storage'):
+        if not fn.startswith("bili_"):
+            continue
         with open('storage/' + fn, 'r', encoding='utf-8') as f:
             data = json.load(f)
             all_emojies.update(data)
@@ -112,7 +114,11 @@ if __name__ == '__main__':
                 return
             except:
                 pass
-            text, tags = write_emojies(win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT).replace('\r', ''))
+            try:
+                orig_text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT).replace('\r', '')
+            except:
+                return
+            text, tags = write_emojies(orig_text)
             win32clipboard.SetClipboardData(fmt_text, text)
             win32clipboard.SetClipboardData(fmt_tags, tags)
             win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
