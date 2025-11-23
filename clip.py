@@ -121,7 +121,7 @@ if __name__ == '__main__':
             text, tags = write_emojies(orig_text)
             win32clipboard.SetClipboardData(fmt_text, text)
             win32clipboard.SetClipboardData(fmt_tags, tags)
-            win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
+            #win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
         except:
             traceback.print_exc()
         finally:
