@@ -1,16 +1,17 @@
 import win32clipboard
+import win32con
+import win32gui
+import win32api
+import ctypes
 import struct
 from io import BytesIO
 import re
 import os
 import json
 
+all_emojies = {}
+
 def write_emojies(text):
-    all_emojies = {}
-    for fn in os.listdir('storage'):
-        with open('storage/' + fn, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            all_emojies.update(data)
     s = ''
     off = 0
     tags = []
@@ -45,20 +46,91 @@ def write_emojies(text):
         bio.write(emoid)
     return s.encode('utf-8'), bio.getbuffer().tobytes()
 
+
+# https://learn.microsoft.com/zh-tw/windows/win32/dataxchg/wm-clipboardupdate
+WM_CLIPBOARDUPDATE = 0x031D
+
+
+class ClipboardMonitor:
+    def __init__(self, handler):
+        self.hwnd = None
+        self.create_window()
+        self.handler = handler
+
+    def create_window(self):
+        wc = win32gui.WNDCLASS()
+        wc.lpfnWndProc = self.wnd_proc
+        wc.lpszClassName = "ClipboardMonitor"
+        self.hwnd = win32gui.CreateWindow(
+            win32gui.RegisterClass(wc),
+            "Clipboard Monitor",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            win32api.GetModuleHandle(None),
+            None
+        )
+
+        ctypes.windll.user32.AddClipboardFormatListener(self.hwnd)
+
+    def wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == WM_CLIPBOARDUPDATE:
+            self.on_clipboard_update()
+        elif msg == win32con.WM_QUIT:
+            print('destroy')
+            win32gui.DestroyWindow(self.hwnd)
+            win32gui.PostQuitMessage(0)
+        return 0
+
+    def on_clipboard_update(self):
+        self.handler()
+
+
 if __name__ == '__main__':
-    win32clipboard.OpenClipboard()
-    try:
-        fmt_tags = win32clipboard.RegisterClipboardFormat('application/x-td-field-tags')
-        fmt_text = win32clipboard.RegisterClipboardFormat('application/x-td-field-text')
-        print('fmt tags', fmt_tags, 'fmt text', fmt_text)
+    import sys
+    import traceback
 
-        text, tags = write_emojies(win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT).replace('\r', ''))
-        win32clipboard.SetClipboardData(fmt_text, text)
-        win32clipboard.SetClipboardData(fmt_tags, tags)
-        win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
-    except:
-        import traceback
+    for fn in os.listdir('storage'):
+        with open('storage/' + fn, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            all_emojies.update(data)
 
-        traceback.print_exc()
+    fmt_tags = win32clipboard.RegisterClipboardFormat('application/x-td-field-tags')
+    fmt_text = win32clipboard.RegisterClipboardFormat('application/x-td-field-text')
+    print('fmt tags', fmt_tags, 'fmt text', fmt_text)
 
-    win32clipboard.CloseClipboard()
+    def rewrite_emoji():
+        win32clipboard.OpenClipboard()
+        try:
+            try:
+                win32clipboard.GetClipboardData(fmt_tags)
+                print('not handling copy from tg')
+                return
+            except:
+                pass
+            text, tags = write_emojies(win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT).replace('\r', ''))
+            win32clipboard.SetClipboardData(fmt_text, text)
+            win32clipboard.SetClipboardData(fmt_tags, tags)
+            win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
+        except:
+            traceback.print_exc()
+        finally:
+            win32clipboard.CloseClipboard()
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "--daemon":
+        monitor = ClipboardMonitor(rewrite_emoji)
+        def CtrlHandler(evt):
+            if evt in (win32con.CTRL_C_EVENT, win32con.CTRL_BREAK_EVENT):
+                #win32gui.DestroyWindow(monitor.hwnd)
+                win32gui.SendMessage(monitor.hwnd, win32con.WM_QUIT, 0, 0)
+                return True
+            return False
+        win32api.SetConsoleCtrlHandler(CtrlHandler, True)
+        win32gui.PumpMessages()  # Keep the window alive to receive messages
+        exit(0)
+
+    rewrite_emoji()
