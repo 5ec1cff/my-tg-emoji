@@ -3,6 +3,7 @@ import win32con
 import win32gui
 import win32api
 import ctypes
+import ctypes.wintypes
 import struct
 from io import BytesIO
 import re
@@ -90,6 +91,32 @@ class ClipboardMonitor:
         self.handler()
 
 
+SetClipboardData = ctypes.windll.user32.SetClipboardData
+GlobalLock          = ctypes.windll.kernel32.GlobalLock
+GlobalLock.restype = ctypes.c_void_p
+GlobalAlloc         = ctypes.windll.kernel32.GlobalAlloc
+GlobalAlloc.restype = ctypes.c_void_p
+GlobalUnlock        = ctypes.windll.kernel32.GlobalUnlock
+memcpy              = ctypes.cdll.msvcrt.memcpy
+CF_TEXT = 1
+GHND                = 0x42
+
+# https://github.com/creotiv/pynetbuffer/blob/ce73ac6798fd883ae678468b2df8c5db4e603087/win/main.py#L85
+# https://learn.microsoft.com/en-us/windows/win32/dataxchg/using-the-clipboard#copy-information-to-the-clipboard
+# https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-globalalloc
+def SetClipboard(type, text):
+    buffer = ctypes.c_buffer(text)
+    bufferSize = ctypes.sizeof(buffer)
+    hGlobalMem = ctypes.c_void_p(GlobalAlloc(GHND, bufferSize))
+    try:
+        lpGlobalMem = ctypes.c_void_p(GlobalLock(hGlobalMem))
+        addr = ctypes.c_void_p(ctypes.addressof(buffer))
+        memcpy(lpGlobalMem, addr, bufferSize)
+    finally:
+        GlobalUnlock(hGlobalMem)
+    SetClipboardData(type, hGlobalMem)
+
+
 if __name__ == '__main__':
     import sys
     import traceback
@@ -119,9 +146,10 @@ if __name__ == '__main__':
             except:
                 return
             text, tags = write_emojies(orig_text)
-            win32clipboard.SetClipboardData(fmt_text, text)
-            win32clipboard.SetClipboardData(fmt_tags, tags)
-            #win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
+            # win32clipboard's bug crashes when set pure number content, so use ctypes
+            SetClipboard(fmt_text, text)
+            SetClipboard(fmt_tags, tags)
+            print('done')
         except:
             traceback.print_exc()
         finally:
