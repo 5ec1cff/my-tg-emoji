@@ -496,39 +496,24 @@ def fixup():
 
 def merge():
     merged_packs = []
+    key_rules = [("bl", r"^bili_"), ("tb", r"tieba_"), ("ka", r"^coolapk_")]
     for fn in sorted(os.listdir('storage')):
         if not fn.endswith('.json'):
             continue
         with open('storage/' + fn, 'r', encoding='utf-8') as f:
-            data = migrate_storage_data(json.load(f), fn)
-        emojis = []
-        for i, e in enumerate(data.get('emojis', [])):
-            if not isinstance(e, dict):
-                continue
-            name = e.get('name')
-            tg_id = e.get('telegram_custom_emoji_id')
-            if name is None or tg_id is None:
-                continue
-            emojis.append({
-                'index': int(e.get('index', i)),
-                'name': name,
-                'telegram_custom_emoji_id': str(tg_id),
-                'emoji': normalize_emoji(e.get('emoji', FALLBACK_EMOJI)),
-            })
-        emojis.sort(key=lambda x: x['index'])
-        for i, e in enumerate(emojis):
-            e['index'] = i
-
-        payload = build_storage_payload(
-            data.get('telegram_pack_name', fn[:-5]),
-            data.get('bilibili_pack_id'),
-            emojis,
-        )
-        merged_packs.append(payload)
+            data = json.load(f)
+            for k, r in key_rules:
+                if re.match(r, fn):
+                    data['key'] = k
+        merged_packs.append(data)
 
     os.makedirs('out', exist_ok=True)
+    merged_data = {
+        'key_order': ['bl', 'tb', 'ka'],
+        'packs': merged_packs,
+    }
     with open('out/merged.json', 'w', encoding='utf-8') as f:
-        json.dump(merged_packs, f, ensure_ascii=False, indent=2)
+        json.dump(merged_data, f, ensure_ascii=False, indent=2)
 
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == 'dl':
