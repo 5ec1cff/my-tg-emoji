@@ -12,6 +12,59 @@ import json
 
 all_emojies = {}
 
+FALLBACK_EMOJI = '🥰'
+
+
+def normalize_emoji(value):
+    if isinstance(value, list):
+        if len(value) == 0:
+            return FALLBACK_EMOJI
+        return value[0]
+    if value is None:
+        return FALLBACK_EMOJI
+    return value
+
+
+def load_storage_emoji_map(data):
+    mp = {}
+
+    # new format
+    if isinstance(data, dict) and isinstance(data.get('emojis'), list):
+        for e in data['emojis']:
+            if not isinstance(e, dict):
+                continue
+            name = e.get('name')
+            tg_id = e.get('telegram_custom_emoji_id')
+            if name is None or tg_id is None:
+                continue
+            mp[name] = {
+                'telegram_custom_emoji_id': str(tg_id),
+                'emoji': normalize_emoji(e.get('emoji')),
+            }
+        return mp
+
+    # old format: {emoji_name: [telegram_custom_emoji_id, emoji]}
+    if not isinstance(data, dict):
+        return mp
+    for name in data:
+        val = data[name]
+        tg_id = None
+        emoji = FALLBACK_EMOJI
+        if isinstance(val, list):
+            if len(val) >= 1:
+                tg_id = val[0]
+            if len(val) >= 2:
+                emoji = normalize_emoji(val[1])
+        else:
+            tg_id = val
+        if tg_id is None:
+            continue
+        mp[name] = {
+            'telegram_custom_emoji_id': str(tg_id),
+            'emoji': emoji,
+        }
+    return mp
+
 def write_emojies(text):
     s = ''
     off = 0
@@ -23,10 +76,10 @@ def write_emojies(text):
         t = text[left:right]
         if t in all_emojies:
             e = all_emojies[t]
-            te = e[1][0]
+            te = e['emoji']
             s += te
             le = len(te.encode('utf-16be')) // 2
-            tags.append(('custom-emoji://' + e[0], off, le))
+            tags.append(('custom-emoji://' + e['telegram_custom_emoji_id'], off, le))
             off += le
         else:
             s += text[left:right]
@@ -122,11 +175,11 @@ if __name__ == '__main__':
     import traceback
 
     for fn in os.listdir('storage'):
-        if not fn.startswith("bili_"):
+        if not fn.startswith("bili_") or not fn.endswith('.json'):
             continue
         with open('storage/' + fn, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            all_emojies.update(data)
+            all_emojies.update(load_storage_emoji_map(data))
 
     fmt_tags = win32clipboard.RegisterClipboardFormat('application/x-td-field-tags')
     fmt_text = win32clipboard.RegisterClipboardFormat('application/x-td-field-text')

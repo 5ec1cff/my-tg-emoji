@@ -17,6 +17,28 @@ with open('config.json', 'r', encoding='utf-8') as f:
     TOKEN = config['token']
     MY_UID = config['my_uid']
 
+
+FALLBACK_EMOJI = '🥰'
+
+
+def normalize_emoji(value):
+    if isinstance(value, list):
+        if len(value) == 0:
+            return FALLBACK_EMOJI
+        return value[0]
+    if value is None:
+        return FALLBACK_EMOJI
+    return value
+
+
+def build_storage_payload(telegram_pack_name, bilibili_pack_id, emojis):
+    return {
+        'version': 2,
+        'telegram_pack_name': telegram_pack_name,
+        'bilibili_pack_id': str(bilibili_pack_id) if bilibili_pack_id is not None else None,
+        'emojis': emojis,
+    }
+
 def process_emojies(path: Path):
     out_dir = path / 'proceed'
     out_json = path / 'proceed.json'
@@ -130,19 +152,25 @@ async def upload_emojies(token, name, path: Path, from_idx=0):
         i = 0
         all_count = len(data)
         while i < all_count:
-            mp = {}
+            emojis = []
             set_name = f'{name}_{pack_id}_by_{me.username}'
             pack_info = await bot.get_sticker_set(set_name)
             print(f'pack {set_name} has {len(pack_info.stickers)}')
+            local_idx = 0
             for sticker in pack_info.stickers:
                 filename, key, emojistr, etype = data[i]
-                if key in mp:
-                    print(f'WARN: duplicated emoji "{key}" (now use {filename})')
-                mp[key] = [sticker.custom_emoji_id, [emojistr[0]]]
+                emojis.append({
+                    'index': local_idx,
+                    'name': key,
+                    'telegram_custom_emoji_id': str(sticker.custom_emoji_id),
+                    'emoji': normalize_emoji(emojistr),
+                })
                 i += 1
+                local_idx += 1
             pack_id += 1
+            storage_payload = build_storage_payload(set_name, None, emojis)
             with open(f"storage/{set_name}.json", 'w', encoding='utf-8') as f:
-                json.dump(mp, f, ensure_ascii=False, indent=2)
+                json.dump(storage_payload, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == '__main__':

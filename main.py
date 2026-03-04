@@ -16,6 +16,128 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from telegram_sticker_utils import ImageProcessor, Sticker
 
 
+FALLBACK_EMOJI = '🥰'
+
+
+def normalize_emoji(value):
+    if isinstance(value, list):
+        if len(value) == 0:
+            return FALLBACK_EMOJI
+        return value[0]
+    if value is None:
+        return FALLBACK_EMOJI
+    return value
+
+
+def infer_source_platform(filename):
+    if filename.startswith('bili_'):
+        return 'bilibili'
+    if filename.startswith('tieba_'):
+        return 'tieba'
+    if filename.startswith('coolapk_'):
+        return 'coolapk'
+    return 'unknown'
+
+
+def build_storage_payload(telegram_pack_name, bilibili_pack_id, emojis):
+    return {
+        'version': 2,
+        'telegram_pack_name': telegram_pack_name,
+        'bilibili_pack_id': str(bilibili_pack_id) if bilibili_pack_id is not None else None,
+        'emojis': emojis,
+    }
+
+
+def infer_bilibili_pack_id_from_cache(emoji_names):
+    packs_root = pathlib.Path('packs')
+    if not packs_root.exists():
+        return None
+    for p in packs_root.iterdir():
+        if not p.is_dir():
+            continue
+        data_file = p / 'data.json'
+        if not data_file.exists():
+            continue
+        try:
+            with open(data_file, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+            cached_names = [e.get('name') for e in cached.get('emoji_list', [])]
+            if cached_names == emoji_names:
+                return p.name
+        except:
+            traceback.print_exc()
+    return None
+
+
+def migrate_storage_data(data, filename):
+    # new format
+    if isinstance(data, dict) and isinstance(data.get('emojis'), list):
+        emojis = []
+        for i, e in enumerate(data.get('emojis', [])):
+            if not isinstance(e, dict):
+                continue
+            name = e.get('name')
+            if name is None:
+                continue
+            emojis.append({
+                'index': int(e.get('index', i)),
+                'name': name,
+                'telegram_custom_emoji_id': str(e.get('telegram_custom_emoji_id')),
+                'emoji': normalize_emoji(e.get('emoji', FALLBACK_EMOJI)),
+            })
+        return build_storage_payload(
+            data.get('telegram_pack_name', filename[:-5]),
+            data.get('bilibili_pack_id'),
+            emojis,
+        )
+
+    # old format: {emoji_name: [telegram_custom_emoji_id, emoji]}
+    if not isinstance(data, dict):
+        raise ValueError(f'unsupported storage format: {filename}')
+
+    emojis = []
+    emoji_names = []
+    for i, name in enumerate(data):
+        val = data[name]
+        tg_id = None
+        emoji = FALLBACK_EMOJI
+        if isinstance(val, list):
+            if len(val) >= 1:
+                tg_id = val[0]
+            if len(val) >= 2:
+                emoji = normalize_emoji(val[1])
+        else:
+            tg_id = val
+        if tg_id is None:
+            continue
+        emoji_names.append(name)
+        emojis.append({
+            'index': i,
+            'name': name,
+            'telegram_custom_emoji_id': str(tg_id),
+            'emoji': emoji,
+        })
+
+    bilibili_pack_id = None
+    if infer_source_platform(filename) == 'bilibili':
+        bilibili_pack_id = infer_bilibili_pack_id_from_cache(emoji_names)
+
+    return build_storage_payload(filename[:-5], bilibili_pack_id, emojis)
+
+
+def migrate_storage_files():
+    os.makedirs('storage', exist_ok=True)
+    for fn in os.listdir('storage'):
+        if not fn.endswith('.json'):
+            continue
+        file_path = pathlib.Path('storage') / fn
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        migrated = migrate_storage_data(data, fn)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(migrated, f, ensure_ascii=False, indent=2)
+
+
 async def get_emoji_data(name, url, client: httpx.AsyncClient):
     for i in range(3):
         try:
@@ -318,17 +440,24 @@ class EmojiBot:
                 k += 1
 
         new_set = await bot.get_sticker_set(pack_name)
-        mp = {}
+        emojis = []
         i = 0
         for s in new_set.stickers:
-            print(i)
+            if i >= len(emoji_list):
+                break
             emoji = emoji_list[i]
             print('emoji', i, emoji['name'], s)
-            mp[emoji['name']] = [s.custom_emoji_id, emoji['emoji']]
+            emojis.append({
+                'index': i,
+                'name': emoji['name'],
+                'telegram_custom_emoji_id': str(s.custom_emoji_id),
+                'emoji': normalize_emoji(emoji['emoji']),
+            })
             i += 1
+        storage_payload = build_storage_payload(pack_name, mid, emojis)
         os.makedirs("storage", exist_ok=True)
         with open(f"storage/{pack_name}.json", 'w', encoding='utf-8') as f:
-            f.write(json.dumps(mp, ensure_ascii=False))
+            json.dump(storage_payload, f, ensure_ascii=False, indent=2)
 
         await update_message(f"{'Updated' if is_update else 'Created'} {total_count} emojies in https://t.me/addemoji/{pack_name}")
 
@@ -346,49 +475,49 @@ class EmojiBot:
 
 
 def fixup():
-    for fn in os.listdir('storage'):
-        with open('storage/' + fn, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        np = {}
-        for e in data:
-            if not isinstance(data[e], list):
-                np[e] = [data[e], '🥰']
-            else:
-                np[e] = data[e]
-        with open('storage/' + fn, 'w', encoding='utf-8') as f:
-            json.dump(np, f, ensure_ascii=False)
+    migrate_storage_files()
 
 
 def merge():
-    key_rules = [("bl", r"^bili_"), ("tb", r"tieba_"), ("ka", r"^coolapk_")]
-    np = {}
-    for fn in os.listdir('storage'):
+    merged_packs = []
+    for fn in sorted(os.listdir('storage')):
+        if not fn.endswith('.json'):
+            continue
         with open('storage/' + fn, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            key = None
-            idx = 0
-            for kr in key_rules:
-                if re.match(kr[1], fn):
-                    key = kr[0]
-                    break
-                idx += 1
-        for k in data:
-            if k not in np:
-                np[k] = list()
-            np[k].append(data[k] + [key, idx])
-    for k in np:
-        v = np[k]
-        if len(v) == 1:
-            np[k] = v[0][:2]
-        else:
-            np[k] = list(map(lambda x:x[:3], sorted(v, key=lambda x:x[3])))
+            data = migrate_storage_data(json.load(f), fn)
+        emojis = []
+        for i, e in enumerate(data.get('emojis', [])):
+            if not isinstance(e, dict):
+                continue
+            name = e.get('name')
+            tg_id = e.get('telegram_custom_emoji_id')
+            if name is None or tg_id is None:
+                continue
+            emojis.append({
+                'index': int(e.get('index', i)),
+                'name': name,
+                'telegram_custom_emoji_id': str(tg_id),
+                'emoji': normalize_emoji(e.get('emoji', FALLBACK_EMOJI)),
+            })
+        emojis.sort(key=lambda x: x['index'])
+        for i, e in enumerate(emojis):
+            e['index'] = i
+
+        payload = build_storage_payload(
+            data.get('telegram_pack_name', fn[:-5]),
+            data.get('bilibili_pack_id'),
+            emojis,
+        )
+        merged_packs.append(payload)
+
+    os.makedirs('out', exist_ok=True)
     with open('out/merged.json', 'w', encoding='utf-8') as f:
-        json.dump(np, f, ensure_ascii=False) #, indent=2)
+        json.dump(merged_packs, f, ensure_ascii=False, indent=2)
 
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == 'dl':
         asyncio.run(dl(sys.argv[2]))
-    elif len(sys.argv) == 2 and sys.argv[1] == 'fixup':
+    elif len(sys.argv) == 2 and sys.argv[1] in ('fixup', 'migrate'):
         fixup()
     elif len(sys.argv) == 2 and sys.argv[1] == 'merge':
         merge()
