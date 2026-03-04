@@ -281,8 +281,8 @@ class EmojiBot:
         print(f'{skip_upload = }')
 
         provided_name, mid = context.args[:2]
-        pack_name = f'bili_{provided_name}_by_{self.me}'
         uid = update.effective_user.id
+        PACK_MAX_COUNT = 200
 
         out_dir = pathlib.Path('packs') / f'{mid}'
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -327,139 +327,155 @@ class EmojiBot:
                     print('modify msg err:', current_msg_id, text)
                     traceback.print_exc()
 
-        sticker_set_info = None
-        current_sticker_count = 0
-        try:
-            sticker_set_info = await bot.get_sticker_set(pack_name)
-            current_sticker_count = len(sticker_set_info.stickers)
-        except:
-            print('get sticker info')
-            sticker_set_info = None
-
-        print('is_update=', is_update)
-        if not is_update and sticker_set_info is not None:
-            await update_message(f"Sticker set {pack_name} has been already created.")
-            return
-        elif is_update and sticker_set_info is None:
-            await update_message(f"Sticker set {pack_name} doesn't exist.")
-            return
-
-        is_created = is_update
         total_count = len(emoji_list)
+        total_packs = (total_count + PACK_MAX_COUNT - 1) // PACK_MAX_COUNT
 
+        start_global_idx = 0
         if not skip_upload:
-            start = upload_from
-            if start is None:
-                start = 0
-            elif start == 's':
-                start = current_sticker_count
+            if upload_from is None:
+                start_global_idx = 0
+            elif upload_from == 's':
+                start_global_idx = 0
             else:
-                start = int(start)
-            print('upload from', start)
-            i = start
-            from_list = emoji_list[start:]
-            async def upload():
-                nonlocal is_created, i
-                for emoji_data in from_list:
-                    emoji = telegram.InputSticker(
-                        emoji_data['data'],
-                        emoji_data['emoji'], emoji_data['type']
-                    )
-                    if not is_created:
-                        print('create', pack_name, 'for', uid, update.effective_user.name)
-                        try:
-                            await bot.create_new_sticker_set(
-                                uid,
-                                pack_name,
-                                emoji_pack_data['pack_name'],
-                                [emoji],
-                                telegram.Sticker.CUSTOM_EMOJI
-                            )
-                            is_created = True
-                        except:
-                            print('create err')
-                            traceback.print_exc()
-                            await update_message(f"CREATE ERROR https://t.me/addemoji/{pack_name}")
-                            return False
-                    else:
-                        try:
-                            if i >= current_sticker_count:
-                                print('add', i)
-                                await bot.add_sticker_to_set(uid, pack_name, emoji)
-                            else:
-                                file_id = sticker_set_info.stickers[i].file_id
-                                print('update', i, file_id)
-                                await bot.replace_sticker_in_set(
-                                    user_id=uid, name=pack_name,
-                                    old_sticker=file_id,
-                                    sticker=emoji
+                start_global_idx = int(upload_from)
+            print(f'upload from emoji index {start_global_idx}')
+
+        all_messages = []
+
+        for pack_idx in range(total_packs):
+            pack_start = pack_idx * PACK_MAX_COUNT
+            pack_end = min((pack_idx + 1) * PACK_MAX_COUNT, total_count)
+            pack_emojis = emoji_list[pack_start:pack_end]
+
+            if pack_idx == 0:
+                pack_name = f'bili_{provided_name}_by_{self.me}'
+            else:
+                pack_name = f'bili_{provided_name}_{pack_idx}_by_{self.me}'
+
+            print(f'Processing pack {pack_idx}: {pack_name} (emojis {pack_start}-{pack_end-1})')
+
+            sticker_set_info = None
+            current_sticker_count = 0
+            try:
+                sticker_set_info = await bot.get_sticker_set(pack_name)
+                current_sticker_count = len(sticker_set_info.stickers)
+            except:
+                print(f'sticker set {pack_name} not found')
+                sticker_set_info = None
+            if pack_idx == 0:
+                if not is_update and sticker_set_info is not None:
+                    await update_message(f"Sticker set {pack_name} has been already created.")
+                    return
+                elif is_update and sticker_set_info is None:
+                    await update_message(f"Sticker set {pack_name} doesn't exist.")
+                    return
+
+            # 判断是否需要执行上传
+            need_upload = False
+            if not skip_upload and start_global_idx < pack_end:
+                need_upload = True
+
+            if need_upload:
+
+                is_created = sticker_set_info is not None
+
+                start_local_idx = max(0, start_global_idx - pack_start)
+                from_list = pack_emojis[start_local_idx:]
+                current_emoji_idx = pack_start + start_local_idx
+
+                async def upload_pack():
+                    nonlocal is_created, current_emoji_idx
+                    for emoji_data in from_list:
+                        emoji = telegram.InputSticker(
+                            emoji_data['data'],
+                            emoji_data['emoji'], emoji_data['type']
+                        )
+                        if not is_created:
+                            print(f'create {pack_name} for {uid}')
+                            try:
+                                await bot.create_new_sticker_set(
+                                    uid,
+                                    pack_name,
+                                    emoji_pack_data['pack_name'],
+                                    [emoji],
+                                    telegram.Sticker.CUSTOM_EMOJI
                                 )
+                                is_created = True
+                            except:
+                                print('create err')
+                                traceback.print_exc()
+                                await update_message(f"CREATE ERROR https://t.me/addemoji/{pack_name}")
+                                return False
+                        else:
+                            local_idx = current_emoji_idx - pack_start
+                            try:
+                                if local_idx >= current_sticker_count:
+                                    print(f'add {current_emoji_idx} to {pack_name}')
+                                    await bot.add_sticker_to_set(uid, pack_name, emoji)
+                                else:
+                                    file_id = sticker_set_info.stickers[local_idx].file_id
+                                    print(f'update {current_emoji_idx} in {pack_name}')
+                                    await bot.replace_sticker_in_set(
+                                        user_id=uid, name=pack_name,
+                                        old_sticker=file_id,
+                                        sticker=emoji
+                                    )
+                            except:
+                                print('add sticker err')
+                                traceback.print_exc()
+                                await update_message(f"ADD ERROR https://t.me/addemoji/{pack_name} at idx {current_emoji_idx}")
+                                return False
+                        current_emoji_idx += 1
+                    return True
+
+                if is_update and current_sticker_count > len(pack_emojis):
+                    print(f'removing redundant emoji from {pack_name}...')
+                    for stk in sticker_set_info.stickers[len(pack_emojis):]:
+                        try:
+                            await bot.delete_sticker_from_set(stk)
                         except:
-                            print('add sticker err')
+                            print('remove redundant sticker err')
                             traceback.print_exc()
-                            print('add sticker err: added', i)
-                            await update_message(f"ADD ERROR https://t.me/addemoji/{pack_name} added {i}")
-                            return False
-                    i += 1
-                return True
-            if is_update and current_sticker_count > i:
-                print('removing redundant emoji ...')
-                # remove any emoji more than expected
-                for stk in sticker_set_info.stickers[current_sticker_count:]:
-                    try:
-                        await bot.delete_sticker_from_set(stk)
-                    except:
-                        print('remove redundant sticker err', i)
-                        traceback.print_exc()
-            aw = [asyncio.create_task(upload())]
-            last_i = -1
-            while True:
-                if aw[0].done():
-                    break
-                if last_i != i:
-                    last_i = i
-                    if total_count == 0:
-                        await update_message(f"https://t.me/addemoji/{pack_name}\nFetching ...")
-                    else:
-                        await update_message(f"https://t.me/addemoji/{pack_name}\nProcessing ... [{i}/{total_count}]")
-                await asyncio.wait(aw, timeout=3)
 
-            if not aw[0].result():
-                return
+                aw = [asyncio.create_task(upload_pack())]
+                last_idx = -1
+                while True:
+                    if aw[0].done():
+                        break
+                    if last_idx != current_emoji_idx:
+                        last_idx = current_emoji_idx
+                        await update_message(f"Pack {pack_idx}/{total_packs-1}: https://t.me/addemoji/{pack_name}\nProcessing ... [{current_emoji_idx}/{total_count}]")
+                    await asyncio.wait(aw, timeout=3)
 
-        if is_update and current_sticker_count > total_count:
-            print('removing redundant emoji ...')
-            # remove any emoji more than expected
-            k = 0
-            for stk in sticker_set_info.stickers[total_count:]:
-                try:
-                    await bot.delete_sticker_from_set(stk)
-                except:
-                    print('remove redundant sticker err', k)
-                    traceback.print_exc()
-                k += 1
+                if not aw[0].result():
+                    return
 
-        new_set = await bot.get_sticker_set(pack_name)
-        emojis = []
-        i = 0
-        for s in new_set.stickers:
-            if i >= len(emoji_list):
-                break
-            emoji = emoji_list[i]
-            print('emoji', i, emoji['name'], s)
-            emojis.append({
-                'index': i,
-                'name': emoji['name'],
-                'telegram_custom_emoji_id': str(s.custom_emoji_id),
-                'emoji': normalize_emoji(emoji['emoji']),
-            })
-            i += 1
-        storage_payload = build_storage_payload(pack_name, mid, emojis)
-        os.makedirs("storage", exist_ok=True)
-        with open(f"storage/{pack_name}.json", 'w', encoding='utf-8') as f:
-            json.dump(storage_payload, f, ensure_ascii=False, indent=2)
+            # 为所有包建立映射（无论是否执行了上传）
+            try:
+                new_set = await bot.get_sticker_set(pack_name)
+                emojis = []
+                for i, s in enumerate(new_set.stickers):
+                    if pack_start + i >= len(emoji_list):
+                        break
+                    emoji = emoji_list[pack_start + i]
+                    print(f'emoji {pack_start + i}: {emoji["name"]}')
+                    emojis.append({
+                        'index': i,
+                        'name': emoji['name'],
+                        'telegram_custom_emoji_id': str(s.custom_emoji_id),
+                        'emoji': normalize_emoji(emoji['emoji']),
+                    })
+                storage_payload = build_storage_payload(pack_name, mid, emojis)
+                os.makedirs("storage", exist_ok=True)
+                with open(f"storage/{pack_name}.json", 'w', encoding='utf-8') as f:
+                    json.dump(storage_payload, f, ensure_ascii=False, indent=2)
+                all_messages.append(f"Pack {pack_idx}: https://t.me/addemoji/{pack_name} ({len(emojis)} emojis)")
+            except Exception as e:
+                print(f'Failed to retrieve sticker set {pack_name}: {e}')
+                all_messages.append(f"Pack {pack_idx}: {pack_name} - failed to retrieve")
 
-        await update_message(f"{'Updated' if is_update else 'Created'} {total_count} emojies in https://t.me/addemoji/{pack_name}")
+        result_text = f"{'Updated' if is_update else 'Created'} {total_count} emojis in {total_packs} pack(s):\n" + "\n".join(all_messages)
+        await update_message(result_text)
 
     async def createpack(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.modifypack(update, context, False)
