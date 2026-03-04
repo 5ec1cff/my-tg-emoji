@@ -9,8 +9,11 @@ from io import BytesIO
 import re
 import os
 import json
+import pathlib
+import traceback
 
 all_emojies = {}
+_emoji_source_signature = None
 
 FALLBACK_EMOJI = '🥰'
 
@@ -64,6 +67,111 @@ def load_storage_emoji_map(data):
             'emoji': emoji,
         }
     return mp
+
+
+def get_pack_key_priority(pack_key, key_order):
+    if pack_key in key_order:
+        return key_order.index(pack_key)
+    return len(key_order)
+
+
+def merge_packs_with_key_order(packs, key_order):
+    selected = {}
+
+    for pack_idx, pack in enumerate(packs):
+        pack_mp = load_storage_emoji_map(pack)
+        pack_key = pack.get('key') if isinstance(pack, dict) else None
+        priority = get_pack_key_priority(pack_key, key_order)
+
+        for name, emoji_data in pack_mp.items():
+            prev = selected.get(name)
+            if prev is None:
+                selected[name] = {
+                    'priority': priority,
+                    'pack_idx': pack_idx,
+                    'data': emoji_data,
+                }
+                continue
+
+            if priority < prev['priority'] or priority == prev['priority'] and pack_idx < prev['pack_idx']:
+                selected[name] = {
+                    'priority': priority,
+                    'pack_idx': pack_idx,
+                    'data': emoji_data,
+                }
+
+    return {name: entry['data'] for name, entry in selected.items()}
+
+
+def load_emoji_map_from_data(data):
+    # merged format: [pack_payload, ...]
+    if isinstance(data, list):
+        return merge_packs_with_key_order(data, [])
+
+    # merged wrapper: {'key_order': [...], 'packs': [...]} 
+    if isinstance(data, dict) and isinstance(data.get('packs'), list):
+        key_order = data.get('key_order', [])
+        if not isinstance(key_order, list):
+            key_order = []
+        return merge_packs_with_key_order(data['packs'], key_order)
+
+    # single payload / legacy map
+    return load_storage_emoji_map(data)
+
+
+def get_file_signature(path: pathlib.Path):
+    st = path.stat()
+    return st.st_mtime_ns, st.st_size
+
+
+def reload_emojies_if_needed(json_path: pathlib.Path, force=False):
+    global _emoji_source_signature
+
+    try:
+        signature = get_file_signature(json_path)
+    except FileNotFoundError:
+        if force:
+            print(f'emoji json not found: {json_path}')
+        return False
+
+    if (not force) and signature == _emoji_source_signature:
+        return False
+
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    loaded = load_emoji_map_from_data(data)
+
+    all_emojies.clear()
+    all_emojies.update(loaded)
+    _emoji_source_signature = signature
+
+    print(f'reloaded {len(all_emojies)} emojis from {json_path}')
+    return True
+
+
+def parse_cli_args(argv):
+    json_path = 'out/merged.json'
+    daemon_mode = False
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == '--daemon':
+            daemon_mode = True
+        elif arg == '--json':
+            i += 1
+            if i >= len(argv):
+                raise ValueError('--json requires a file path')
+            json_path = argv[i]
+        elif arg.startswith('--json='):
+            json_path = arg.split('=', 1)[1]
+        elif arg.startswith('--'):
+            raise ValueError(f'unknown option: {arg}')
+        else:
+            json_path = arg
+        i += 1
+
+    return pathlib.Path(json_path), daemon_mode
 
 def write_emojies(text):
     s = ''
@@ -172,20 +280,32 @@ def SetClipboard(type, text):
 
 if __name__ == '__main__':
     import sys
-    import traceback
 
-    for fn in os.listdir('storage'):
-        if not fn.startswith("bili_") or not fn.endswith('.json'):
-            continue
-        with open('storage/' + fn, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            all_emojies.update(load_storage_emoji_map(data))
+    try:
+        source_json_path, daemon_mode = parse_cli_args(sys.argv[1:])
+    except ValueError as e:
+        print(e)
+        print('usage: python clip.py [json_path] [--daemon]')
+        print('   or: python clip.py --json <json_path> [--daemon]')
+        exit(1)
+
+    try:
+        reload_emojies_if_needed(source_json_path, force=True)
+    except Exception:
+        print(f'failed to load emoji json: {source_json_path}')
+        traceback.print_exc()
+        exit(1)
 
     fmt_tags = win32clipboard.RegisterClipboardFormat('application/x-td-field-tags')
     fmt_text = win32clipboard.RegisterClipboardFormat('application/x-td-field-text')
     print('fmt tags', fmt_tags, 'fmt text', fmt_text)
 
     def rewrite_emoji():
+        try:
+            reload_emojies_if_needed(source_json_path)
+        except Exception:
+            print(f'failed to reload emoji json: {source_json_path}')
+            traceback.print_exc()
         win32clipboard.OpenClipboard()
         try:
             try:
@@ -208,7 +328,7 @@ if __name__ == '__main__':
         finally:
             win32clipboard.CloseClipboard()
 
-    if len(sys.argv) >= 2 and sys.argv[1] == "--daemon":
+    if daemon_mode:
         monitor = ClipboardMonitor(rewrite_emoji)
         def CtrlHandler(evt):
             if evt in (win32con.CTRL_C_EVENT, win32con.CTRL_BREAK_EVENT):
